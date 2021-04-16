@@ -1,55 +1,45 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AmqplibAdapter = exports.createAdapter = void 0;
+/*
+ * @Author: Summer
+ * @LastEditors: Summer
+ * @Description:
+ * @Date: 2021-04-15 17:29:34 +0800
+ * @LastEditTime: 2021-04-16 11:07:29 +0800
+ * @FilePath: /socket.io-amqplib/src/index.ts
+ */
 const uid2 = require("uid2");
 const socket_io_adapter_1 = require("socket.io-adapter");
 const amqplib_1 = require("amqplib");
 const msgpack = require("notepack.io");
 const debug = require("debug")("socket.io-amqplib");
 module.exports = exports = createAdapter;
-/**
- * Request types, for messages between nodes
- */
-var RequestType;
-(function (RequestType) {
-    RequestType[RequestType["SOCKETS"] = 0] = "SOCKETS";
-    RequestType[RequestType["ALL_ROOMS"] = 1] = "ALL_ROOMS";
-    RequestType[RequestType["REMOTE_JOIN"] = 2] = "REMOTE_JOIN";
-    RequestType[RequestType["REMOTE_LEAVE"] = 3] = "REMOTE_LEAVE";
-    RequestType[RequestType["REMOTE_DISCONNECT"] = 4] = "REMOTE_DISCONNECT";
-    RequestType[RequestType["REMOTE_FETCH"] = 5] = "REMOTE_FETCH";
-})(RequestType || (RequestType = {}));
-/**
- * Returns a redis Adapter class.
- *
- * @param {String} uri - optional, redis uri
- * @param {String} opts - redis connection options
- * @return {AmqplibAdapter} adapter
- *
- * @public
- */
+var RequestMethod;
+(function (RequestMethod) {
+    RequestMethod[RequestMethod["addAll"] = 0] = "addAll";
+    RequestMethod[RequestMethod["del"] = 1] = "del";
+    RequestMethod[RequestMethod["delAll"] = 2] = "delAll";
+    RequestMethod[RequestMethod["broadcast"] = 3] = "broadcast";
+    RequestMethod[RequestMethod["sockets"] = 4] = "sockets";
+    RequestMethod[RequestMethod["socketRooms"] = 5] = "socketRooms";
+    RequestMethod[RequestMethod["fetchSockets"] = 6] = "fetchSockets";
+    RequestMethod[RequestMethod["addSockets"] = 7] = "addSockets";
+    RequestMethod[RequestMethod["delSockets"] = 8] = "delSockets";
+    RequestMethod[RequestMethod["disconnectSockets"] = 9] = "disconnectSockets";
+    ////////////////////
+    RequestMethod[RequestMethod["response"] = 10] = "response";
+})(RequestMethod || (RequestMethod = {}));
 function createAdapter(uri, opts = {}) {
     // handle options only
-    if (typeof uri === "object") {
-        opts = uri;
-        uri = null;
-    }
     return function (nsp) {
         return new AmqplibAdapter(nsp, uri, opts);
     };
 }
 exports.createAdapter = createAdapter;
-let __mqchannel;
+let __mqsub;
+let __mqpub;
 class AmqplibAdapter extends socket_io_adapter_1.Adapter {
-    /**
-     * Adapter constructor.
-     *
-     * @param nsp - the namespace
-     * @param uri - the url of the Redis server
-     * @param opts - the options for both the Redis adapter and the Redis client
-     *
-     * @public
-     */
     constructor(nsp, uri, opts = {}) {
         super(nsp);
         this.uri = uri;
@@ -59,409 +49,193 @@ class AmqplibAdapter extends socket_io_adapter_1.Adapter {
         this.requestsTimeout = this.opts.requestsTimeout || 5000;
         const prefix = opts.key || "socket.io";
         this.channel = prefix + "#" + nsp.name + "#";
-        this.requestChannel = prefix + "-request#" + this.nsp.name + "#";
-        this.responseChannel = prefix + "-response#" + this.nsp.name + "#";
-        const onError = (err) => {
-            if (err) {
-                this.emit("error", err);
+    }
+    async init() {
+        try {
+            const createChannel = async () => {
+                let __mqconnect = await amqplib_1.connect(this.uri);
+                return __mqconnect.createChannel();
+            };
+            __mqsub = await createChannel();
+            await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
+            let qok = await __mqsub.assertQueue("", { exclusive: true });
+            debug("QOK", qok);
+            await __mqsub.bindQueue(qok.queue, this.channel, "");
+            await __mqsub.consume(qok.queue, this.onmessage.bind(this), { noAck: true });
+            __mqpub = await createChannel();
+            await __mqpub.assertExchange(this.channel, "fanout", { durable: false });
+        }
+        catch (error) {
+            this.emit("error", error);
+        }
+    }
+    async publish(msg) {
+        if (__mqpub) {
+            await __mqpub.publish(this.channel, "", msg);
+        }
+    }
+    async onmessage(msg) {
+        if (msg && msg.content) {
+            try {
+                const args = msgpack.decode(msg.content);
+                const type = args.shift();
+                const uid = args.shift();
+                if (this.uid === uid)
+                    return debug("ignore same uid");
+                switch (type) {
+                    case RequestMethod.addAll: {
+                        super.addAll.apply(this, args);
+                        break;
+                    }
+                    case RequestMethod.addSockets: {
+                        super.addSockets.apply(this, args);
+                        break;
+                    }
+                    case RequestMethod.broadcast: {
+                        super.broadcast.apply(this, args);
+                        break;
+                    }
+                    case RequestMethod.del: {
+                        super.del.apply(this, args);
+                        break;
+                    }
+                    case RequestMethod.delAll: {
+                        super.delAll.apply(this, args);
+                        break;
+                    }
+                    case RequestMethod.delSockets: {
+                        super.delSockets.apply(this, args);
+                        break;
+                    }
+                    case RequestMethod.disconnectSockets: {
+                        super.disconnectSockets.apply(this, args);
+                        break;
+                    }
+                    case RequestMethod.fetchSockets: {
+                        super.fetchSockets.apply(this, args);
+                        break;
+                    }
+                    case RequestMethod.socketRooms: {
+                        super.socketRooms.apply(this, args);
+                        break;
+                    }
+                    case RequestMethod.sockets: {
+                        super.sockets.apply(this, args);
+                        break;
+                    }
+                    case RequestMethod.response: {
+                        break;
+                    }
+                    default:
+                        debug("ignoring unknown request type: %s", args[0]);
+                }
             }
-        };
-        amqplib_1.connect(this.uri).then(async (connect) => {
-            debug("连接 MQ 成功");
-            __mqchannel = await connect.createChannel();
-            debug("创建频道成功");
-            __mqchannel.assertQueue(this.channel).then(ok => debug(`监听消息[${this.channel}]:`, ok)).catch(onError);
-            __mqchannel.assertQueue(this.requestChannel).then(ok => debug(`监听消息[${this.requestChannel}]:`, ok)).catch(onError);
-            __mqchannel.assertQueue(this.responseChannel).then(ok => debug(`监听消息[${this.responseChannel}]:`, ok)).catch(onError);
-            __mqchannel.consume(this.channel, msg => msg && this.onmessage(msg));
-            __mqchannel.consume(this.requestChannel, msg => msg && this.onrequest(msg));
-            __mqchannel.consume(this.responseChannel, msg => msg && this.onresponse(msg));
-        });
-    }
-    async sendMessage(channel, msg) {
-        if (__mqchannel) {
-            await __mqchannel.assertQueue(channel);
-            await __mqchannel.sendToQueue(channel, Buffer.from(msg));
+            catch (error) {
+                this.emit("error", error);
+            }
+            __mqpub.ack(msg);
         }
     }
     /**
-     * Called with a subscription message
+     * Adds a socket to a list of room.
      *
-     * @private
+     * @param {SocketId}  id      the socket id
+     * @param {Set<Room>} rooms   a set of rooms
+     * @public
      */
-    onmessage(msg) {
-        const args = msgpack.decode(msg.content);
-        const [uid, packet, opts, channel] = args;
-        const room = channel.slice(this.channel.length, -1);
-        if (room !== "" && !this.rooms.has(room)) {
-            return debug("ignore unknown room %s", room);
-        }
-        if (this.uid === uid)
-            return debug("ignore same uid");
-        if (packet && packet.nsp === undefined) {
-            packet.nsp = "/";
-        }
-        if (!packet || packet.nsp !== this.nsp.name) {
-            return debug("ignore different namespace");
-        }
-        opts.rooms = new Set(opts.rooms);
-        opts.except = new Set(opts.except);
-        super.broadcast(packet, opts);
+    async addAll(id, rooms) {
+        this.publish(msgpack.encode([RequestMethod.addAll, this.uid, id, rooms]));
+        super.addAll(id, rooms);
     }
     /**
-     * Called on request from another node
+     * Removes a socket from a room.
      *
-     * @private
+     * @param {SocketId} id     the socket id
+     * @param {Room}     room   the room name
      */
-    async onrequest(msg) {
-        let request;
-        try {
-            request = JSON.parse(msg.content.toString());
-        }
-        catch (err) {
-            this.emit("error", err);
-            return;
-        }
-        debug("received request %j", request);
-        let response, socket;
-        switch (request.type) {
-            case RequestType.SOCKETS:
-                if (this.requests.has(request.requestId)) {
-                    return;
-                }
-                const sockets = await super.sockets(new Set(request.rooms));
-                response = JSON.stringify({
-                    requestId: request.requestId,
-                    sockets: [...sockets],
-                });
-                this.sendMessage(this.responseChannel, response);
-                break;
-            case RequestType.ALL_ROOMS:
-                if (this.requests.has(request.requestId)) {
-                    return;
-                }
-                response = JSON.stringify({
-                    requestId: request.requestId,
-                    rooms: [...this.rooms.keys()],
-                });
-                this.sendMessage(this.responseChannel, response);
-                break;
-            case RequestType.REMOTE_JOIN:
-                if (request.opts) {
-                    const opts = {
-                        rooms: new Set(request.opts.rooms),
-                        except: new Set(request.opts.except),
-                    };
-                    return super.addSockets(opts, request.rooms);
-                }
-                socket = this.nsp.sockets.get(request.sid);
-                if (!socket) {
-                    return;
-                }
-                socket.join(request.room);
-                response = JSON.stringify({
-                    requestId: request.requestId,
-                });
-                this.sendMessage(this.responseChannel, response);
-                break;
-            case RequestType.REMOTE_LEAVE:
-                if (request.opts) {
-                    const opts = {
-                        rooms: new Set(request.opts.rooms),
-                        except: new Set(request.opts.except),
-                    };
-                    return super.delSockets(opts, request.rooms);
-                }
-                socket = this.nsp.sockets.get(request.sid);
-                if (!socket) {
-                    return;
-                }
-                socket.leave(request.room);
-                response = JSON.stringify({
-                    requestId: request.requestId,
-                });
-                this.sendMessage(this.responseChannel, response);
-                break;
-            case RequestType.REMOTE_DISCONNECT:
-                if (request.opts) {
-                    const opts = {
-                        rooms: new Set(request.opts.rooms),
-                        except: new Set(request.opts.except),
-                    };
-                    return super.disconnectSockets(opts, request.close);
-                }
-                socket = this.nsp.sockets.get(request.sid);
-                if (!socket) {
-                    return;
-                }
-                socket.disconnect(request.close);
-                response = JSON.stringify({
-                    requestId: request.requestId,
-                });
-                this.sendMessage(this.responseChannel, response);
-                break;
-            case RequestType.REMOTE_FETCH:
-                if (this.requests.has(request.requestId)) {
-                    return;
-                }
-                const opts = {
-                    rooms: new Set(request.opts.rooms),
-                    except: new Set(request.opts.except),
-                };
-                const localSockets = await super.fetchSockets(opts);
-                response = JSON.stringify({
-                    requestId: request.requestId,
-                    sockets: localSockets.map((socket) => ({
-                        id: socket.id,
-                        handshake: socket.handshake,
-                        rooms: [...socket.rooms],
-                        data: socket.data,
-                    })),
-                });
-                this.sendMessage(this.responseChannel, response);
-                break;
-            default:
-                debug("ignoring unknown request type: %s", request.type);
-        }
+    async del(id, room) {
+        this.publish(msgpack.encode([RequestMethod.del, this.uid, id, room]));
+        super.del(id, room);
     }
     /**
-     * Called on response from another node
+     * Removes a socket from all rooms it's joined.
      *
-     * @private
+     * @param {SocketId} id   the socket id
      */
-    onresponse(msg) {
-        let response;
-        try {
-            response = JSON.parse(msg.content.toString());
-        }
-        catch (err) {
-            this.emit("error", err);
-            return;
-        }
-        const requestId = response.requestId;
-        const request = this.requests.get(requestId);
-        if (!requestId || !this.requests.has(requestId) || !request) {
-            debug("ignoring unknown request");
-            return;
-        }
-        debug("received response %j", response);
-        switch (request.type) {
-            case RequestType.REMOTE_JOIN:
-            case RequestType.REMOTE_LEAVE:
-            case RequestType.REMOTE_DISCONNECT:
-                clearTimeout(request.timeout);
-                if (request.resolve) {
-                    request.resolve();
-                }
-                this.requests.delete(requestId);
-                break;
-            default:
-                debug("ignoring unknown request type: %s", request.type);
-        }
+    async delAll(id) {
+        this.publish(msgpack.encode([RequestMethod.delAll, this.uid, id]));
+        super.delAll(id);
     }
     /**
      * Broadcasts a packet.
      *
-     * @param {Object} packet - packet to emit
-     * @param {Object} opts - options
+     * Options:
+     *  - `flags` {Object} flags for this packet
+     *  - `except` {Array} sids that should be excluded
+     *  - `rooms` {Array} list of rooms to broadcast to
      *
+     * @param {Object} packet   the packet object
+     * @param {Object} opts     the options
      * @public
      */
-    broadcast(packet, opts) {
-        packet.nsp = this.nsp.name;
-        const onlyLocal = opts && opts.flags && opts.flags.local;
-        if (!onlyLocal) {
-            let channel = this.channel;
-            if (opts.rooms && opts.rooms.size === 1) {
-                channel += opts.rooms.keys().next().value + "#";
-            }
-            const rawOpts = {
-                rooms: [...opts.rooms],
-                except: [...new Set(opts.except)],
-                flags: opts.flags
-            };
-            const msg = msgpack.encode([this.uid, packet, rawOpts, channel]);
-            debug("publishing message to channel %s", channel);
-            this.sendMessage(this.channel, msg);
-        }
+    async broadcast(packet, opts) {
+        this.publish(msgpack.encode([RequestMethod.broadcast, this.uid, packet, opts]));
         super.broadcast(packet, opts);
     }
+    // /**
+    //  * Gets a list of sockets by sid.
+    //  *
+    //  * @param {Set<Room>} rooms   the explicit set of rooms to check.
+    //  */
+    // public async sockets(rooms: Set<Room>): Promise<Set<SocketId>> {
+    //     const requestId = uid2(6);
+    //     return;
+    // }
+    // /**
+    //  * Gets the list of rooms a given socket has joined.
+    //  *
+    //  * @param {SocketId} id   the socket id
+    //  */
+    // public async remoteSocketRooms(id: SocketId): Promise<Set<Room> | undefined> {
+    //     return;
+    // }
+    // /**
+    //  * Returns the matching socket instances
+    //  *
+    //  * @param opts - the filters to apply
+    //  */
+    // public async fetchSockets(opts: BroadcastOptions): Promise<any[]> {
+    //     return;
+    // }
     /**
-     * Gets a list of sockets by sid.
+     * Makes the matching socket instances join the specified rooms
      *
-     * @param {Set<Room>} rooms   the explicit set of rooms to check.
+     * @param opts - the filters to apply
+     * @param rooms - the rooms to join
      */
-    async sockets(rooms) {
-        return new Set();
-    }
-    /**
-     * Gets the list of all rooms (across every node)
-     *
-     * @public
-     */
-    async allRooms() {
-        return new Set();
-    }
-    /**
-     * Makes the socket with the given id join the room
-     *
-     * @param {String} id - socket id
-     * @param {String} room - room name
-     * @public
-     */
-    remoteJoin(id, room) {
-        const requestId = uid2(6);
-        const socket = this.nsp.sockets.get(id);
-        if (socket) {
-            socket.join(room);
-            return Promise.resolve();
-        }
-        const request = JSON.stringify({
-            requestId,
-            type: RequestType.REMOTE_JOIN,
-            sid: id,
-            room,
-        });
-        return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                if (this.requests.has(requestId)) {
-                    reject(new Error("timeout reached while waiting for remoteJoin response"));
-                    this.requests.delete(requestId);
-                }
-            }, this.requestsTimeout);
-            this.requests.set(requestId, {
-                type: RequestType.REMOTE_JOIN,
-                resolve,
-                timeout,
-            });
-            this.sendMessage(this.requestChannel, request);
-        });
+    async addSockets(opts, rooms) {
+        this.publish(msgpack.encode([RequestMethod.addSockets, this.uid, opts, rooms]));
+        super.addSockets(opts, rooms);
     }
     /**
-     * Makes the socket with the given id leave the room
+     * Makes the matching socket instances leave the specified rooms
      *
-     * @param {String} id - socket id
-     * @param {String} room - room name
-     * @public
+     * @param opts - the filters to apply
+     * @param rooms - the rooms to leave
      */
-    remoteLeave(id, room) {
-        const requestId = uid2(6);
-        const socket = this.nsp.sockets.get(id);
-        if (socket) {
-            socket.leave(room);
-            return Promise.resolve();
-        }
-        const request = JSON.stringify({
-            requestId,
-            type: RequestType.REMOTE_LEAVE,
-            sid: id,
-            room,
-        });
-        return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                if (this.requests.has(requestId)) {
-                    reject(new Error("timeout reached while waiting for remoteLeave response"));
-                    this.requests.delete(requestId);
-                }
-            }, this.requestsTimeout);
-            this.requests.set(requestId, {
-                type: RequestType.REMOTE_LEAVE,
-                resolve,
-                timeout,
-            });
-            this.sendMessage(this.requestChannel, request);
-        });
+    async delSockets(opts, rooms) {
+        this.publish(msgpack.encode([RequestMethod.delSockets, this.uid, opts, rooms]));
+        super.delSockets(opts, rooms);
     }
     /**
-     * Makes the socket with the given id to be forcefully disconnected
-     * @param {String} id - socket id
-     * @param {Boolean} close - if `true`, closes the underlying connection
+     * Makes the matching socket instances disconnect
      *
-     * @public
+     * @param opts - the filters to apply
+     * @param close - whether to close the underlying connection
      */
-    remoteDisconnect(id, close) {
-        const requestId = uid2(6);
-        const socket = this.nsp.sockets.get(id);
-        if (socket) {
-            socket.disconnect(close);
-            return Promise.resolve();
-        }
-        const request = JSON.stringify({
-            requestId,
-            type: RequestType.REMOTE_DISCONNECT,
-            sid: id,
-            close,
-        });
-        return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                if (this.requests.has(requestId)) {
-                    reject(new Error("timeout reached while waiting for remoteDisconnect response"));
-                    this.requests.delete(requestId);
-                }
-            }, this.requestsTimeout);
-            this.requests.set(requestId, {
-                type: RequestType.REMOTE_DISCONNECT,
-                resolve,
-                timeout,
-            });
-            this.sendMessage(this.requestChannel, request);
-        });
-    }
-    async fetchSockets(opts) {
-        return [];
-    }
-    addSockets(opts, rooms) {
-        var _a;
-        if ((_a = opts.flags) === null || _a === void 0 ? void 0 : _a.local) {
-            return super.addSockets(opts, rooms);
-        }
-        const request = JSON.stringify({
-            type: RequestType.REMOTE_JOIN,
-            opts: {
-                rooms: [...opts.rooms],
-                except: [...opts.except || []],
-            },
-            rooms: [...rooms],
-        });
-        this.sendMessage(this.requestChannel, request);
-    }
-    delSockets(opts, rooms) {
-        var _a;
-        if ((_a = opts.flags) === null || _a === void 0 ? void 0 : _a.local) {
-            return super.delSockets(opts, rooms);
-        }
-        const request = JSON.stringify({
-            type: RequestType.REMOTE_LEAVE,
-            opts: {
-                rooms: [...opts.rooms],
-                except: [...opts.except || []],
-            },
-            rooms: [...rooms],
-        });
-        this.sendMessage(this.requestChannel, request);
-    }
-    disconnectSockets(opts, close) {
-        var _a;
-        if ((_a = opts.flags) === null || _a === void 0 ? void 0 : _a.local) {
-            return super.disconnectSockets(opts, close);
-        }
-        const request = JSON.stringify({
-            type: RequestType.REMOTE_DISCONNECT,
-            opts: {
-                rooms: [...opts.rooms],
-                except: [...opts.except || []],
-            },
-            close,
-        });
-        this.sendMessage(this.requestChannel, request);
-    }
-    /**
-     * Get the number of subscribers of the request channel
-     *
-     * @private
-     */
-    async getNumSub() {
-        return 0;
+    async disconnectSockets(opts, close) {
+        this.publish(msgpack.encode([RequestMethod.disconnectSockets, this.uid, opts, close]));
+        super.disconnectSockets(opts, close);
     }
 }
 exports.AmqplibAdapter = AmqplibAdapter;

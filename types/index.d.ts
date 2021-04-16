@@ -12,101 +12,71 @@ export interface AmqplibAdapterOptions {
      */
     requestsTimeout: number;
 }
-/**
- * Returns a redis Adapter class.
- *
- * @param {String} uri - optional, redis uri
- * @param {String} opts - redis connection options
- * @return {AmqplibAdapter} adapter
- *
- * @public
- */
-export declare function createAdapter(uri?: any, opts?: Partial<AmqplibAdapterOptions>): (nsp: Namespace) => AmqplibAdapter;
+export declare function createAdapter(uri: string, opts?: Partial<AmqplibAdapterOptions>): (nsp: Namespace) => AmqplibAdapter;
 export declare class AmqplibAdapter extends Adapter {
     private uri;
     private opts;
     readonly uid: string;
     readonly requestsTimeout: number;
     private readonly channel;
-    private readonly requestChannel;
-    private readonly responseChannel;
     private requests;
-    /**
-     * Adapter constructor.
-     *
-     * @param nsp - the namespace
-     * @param uri - the url of the Redis server
-     * @param opts - the options for both the Redis adapter and the Redis client
-     *
-     * @public
-     */
     constructor(nsp: Namespace, uri: string, opts?: Partial<AmqplibAdapterOptions>);
-    private sendMessage;
-    /**
-     * Called with a subscription message
-     *
-     * @private
-     */
+    init(): Promise<void>;
+    private publish;
     private onmessage;
     /**
-     * Called on request from another node
+     * Adds a socket to a list of room.
      *
-     * @private
+     * @param {SocketId}  id      the socket id
+     * @param {Set<Room>} rooms   a set of rooms
+     * @public
      */
-    private onrequest;
+    addAll(id: SocketId, rooms: Set<Room>): Promise<void>;
     /**
-     * Called on response from another node
+     * Removes a socket from a room.
      *
-     * @private
+     * @param {SocketId} id     the socket id
+     * @param {Room}     room   the room name
      */
-    private onresponse;
+    del(id: SocketId, room: Room): Promise<void>;
+    /**
+     * Removes a socket from all rooms it's joined.
+     *
+     * @param {SocketId} id   the socket id
+     */
+    delAll(id: SocketId): Promise<void>;
     /**
      * Broadcasts a packet.
      *
-     * @param {Object} packet - packet to emit
-     * @param {Object} opts - options
+     * Options:
+     *  - `flags` {Object} flags for this packet
+     *  - `except` {Array} sids that should be excluded
+     *  - `rooms` {Array} list of rooms to broadcast to
      *
+     * @param {Object} packet   the packet object
+     * @param {Object} opts     the options
      * @public
      */
-    broadcast(packet: any, opts: BroadcastOptions): void;
+    broadcast(packet: any, opts: BroadcastOptions): Promise<void>;
     /**
-     * Gets a list of sockets by sid.
+     * Makes the matching socket instances join the specified rooms
      *
-     * @param {Set<Room>} rooms   the explicit set of rooms to check.
+     * @param opts - the filters to apply
+     * @param rooms - the rooms to join
      */
-    sockets(rooms: Set<Room>): Promise<Set<SocketId>>;
+    addSockets(opts: BroadcastOptions, rooms: Room[]): Promise<void>;
     /**
-     * Gets the list of all rooms (across every node)
+     * Makes the matching socket instances leave the specified rooms
      *
-     * @public
+     * @param opts - the filters to apply
+     * @param rooms - the rooms to leave
      */
-    allRooms(): Promise<Set<Room>>;
+    delSockets(opts: BroadcastOptions, rooms: Room[]): Promise<void>;
     /**
-     * Makes the socket with the given id join the room
+     * Makes the matching socket instances disconnect
      *
-     * @param {String} id - socket id
-     * @param {String} room - room name
-     * @public
+     * @param opts - the filters to apply
+     * @param close - whether to close the underlying connection
      */
-    remoteJoin(id: SocketId, room: Room): Promise<void>;
-    /**
-     * Makes the socket with the given id leave the room
-     *
-     * @param {String} id - socket id
-     * @param {String} room - room name
-     * @public
-     */
-    remoteLeave(id: SocketId, room: Room): Promise<void>;
-    /**
-     * Makes the socket with the given id to be forcefully disconnected
-     * @param {String} id - socket id
-     * @param {Boolean} close - if `true`, closes the underlying connection
-     *
-     * @public
-     */
-    remoteDisconnect(id: SocketId, close?: boolean): Promise<void>;
-    fetchSockets(opts: BroadcastOptions): Promise<any[]>;
-    addSockets(opts: BroadcastOptions, rooms: Room[]): void;
-    delSockets(opts: BroadcastOptions, rooms: Room[]): void;
-    disconnectSockets(opts: BroadcastOptions, close: boolean): void;
+    disconnectSockets(opts: BroadcastOptions, close: boolean): Promise<void>;
 }
