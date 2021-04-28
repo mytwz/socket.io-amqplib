@@ -1,23 +1,20 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.AmqplibAdapter = exports.createAdapter = void 0;
 /*
  * @Author: Summer
  * @LastEditors: Summer
  * @Description:
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-04-16 11:07:29 +0800
+ * @LastEditTime: 2021-04-16 11:50:40 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 const uid2 = require("uid2");
-const socket_io_adapter_1 = require("socket.io-adapter");
 const amqplib_1 = require("amqplib");
 const msgpack = require("notepack.io");
+const Adapter = require("socket.io-adapter");
 const debug = require("debug")("socket.io-amqplib");
-module.exports = exports = createAdapter;
 var RequestMethod;
 (function (RequestMethod) {
-    RequestMethod[RequestMethod["addAll"] = 0] = "addAll";
+    RequestMethod[RequestMethod["add"] = 0] = "add";
     RequestMethod[RequestMethod["del"] = 1] = "del";
     RequestMethod[RequestMethod["delAll"] = 2] = "delAll";
     RequestMethod[RequestMethod["broadcast"] = 3] = "broadcast";
@@ -36,10 +33,9 @@ function createAdapter(uri, opts = {}) {
         return new AmqplibAdapter(nsp, uri, opts);
     };
 }
-exports.createAdapter = createAdapter;
 let __mqsub;
 let __mqpub;
-class AmqplibAdapter extends socket_io_adapter_1.Adapter {
+class AmqplibAdapter extends Adapter {
     constructor(nsp, uri, opts = {}) {
         super(nsp);
         this.uri = uri;
@@ -48,7 +44,8 @@ class AmqplibAdapter extends socket_io_adapter_1.Adapter {
         this.uid = uid2(6);
         this.requestsTimeout = this.opts.requestsTimeout || 5000;
         const prefix = opts.key || "socket.io";
-        this.channel = prefix + "#" + nsp.name + "#";
+        this.channel = prefix + "-message";
+        this.init();
     }
     async init() {
         try {
@@ -83,8 +80,8 @@ class AmqplibAdapter extends socket_io_adapter_1.Adapter {
                 if (this.uid === uid)
                     return debug("ignore same uid");
                 switch (type) {
-                    case RequestMethod.addAll: {
-                        super.addAll.apply(this, args);
+                    case RequestMethod.add: {
+                        super.add.apply(this, args);
                         break;
                     }
                     case RequestMethod.addSockets: {
@@ -133,7 +130,6 @@ class AmqplibAdapter extends socket_io_adapter_1.Adapter {
             catch (error) {
                 this.emit("error", error);
             }
-            __mqpub.ack(msg);
         }
     }
     /**
@@ -143,9 +139,9 @@ class AmqplibAdapter extends socket_io_adapter_1.Adapter {
      * @param {Set<Room>} rooms   a set of rooms
      * @public
      */
-    async addAll(id, rooms) {
-        this.publish(msgpack.encode([RequestMethod.addAll, this.uid, id, rooms]));
-        super.addAll(id, rooms);
+    async add(id, rooms) {
+        this.publish(msgpack.encode([RequestMethod.add, this.uid, id, rooms]));
+        super.add(id, rooms);
     }
     /**
      * Removes a socket from a room.
@@ -238,4 +234,4 @@ class AmqplibAdapter extends socket_io_adapter_1.Adapter {
         super.disconnectSockets(opts, close);
     }
 }
-exports.AmqplibAdapter = AmqplibAdapter;
+module.exports = createAdapter;

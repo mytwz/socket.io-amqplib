@@ -1,6 +1,6 @@
 {
   "name": "socket.io-amqplib",
-  "version": "2.0.0",
+  "version": "2.1.4",
   "description": "使用　amqplib　作为　SocketIO 的消息中间件",
   "main": "./dist/index.js",
   "types": "./types/index.d.ts",
@@ -24,7 +24,7 @@
     "amqplib": "^0.7.1",
     "debug": "~4.3.1",
     "notepack.io": "~2.2.0",
-    "socket.io-adapter": "^2.2.0",
+    "socket.io-adapter": "0.5.0",
     "uid2": "0.0.3"
   },
   "devDependencies": {

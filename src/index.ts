@@ -4,20 +4,22 @@
  * @LastEditors: Summer
  * @Description: 
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-04-16 11:07:29 +0800
+ * @LastEditTime: 2021-04-16 11:50:40 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 import uid2 = require("uid2");
 import { Namespace } from "socket.io";
-import { Adapter, BroadcastOptions, Room, SocketId } from "socket.io-adapter";
 import { connect, Channel, ConsumeMessage } from "amqplib";
 const msgpack = require("notepack.io");
+const Adapter = require("socket.io-adapter");
 const debug = require("debug")("socket.io-amqplib");
 
-module.exports = exports = createAdapter;
+type BroadcastOptions = any
+type Room = string;
+type SocketId = string
 
 enum RequestMethod {
-    addAll = 0,
+    add = 0,
     del,
     delAll,
     broadcast,
@@ -32,7 +34,7 @@ enum RequestMethod {
     response
 }
 
-export interface AmqplibAdapterOptions {
+interface AmqplibAdapterOptions {
     /**
      * the name of the key to pub/sub events on as prefix
      * @default socket.io
@@ -46,7 +48,7 @@ export interface AmqplibAdapterOptions {
 }
 
 
-export function createAdapter(uri: string, opts: Partial<AmqplibAdapterOptions> = {}) {
+function createAdapter(uri: string, opts: Partial<AmqplibAdapterOptions> = {}) {
     // handle options only
     return function (nsp: Namespace) {
         return new AmqplibAdapter(nsp, uri, opts);
@@ -57,7 +59,7 @@ export function createAdapter(uri: string, opts: Partial<AmqplibAdapterOptions> 
 let __mqsub: Channel;
 let __mqpub: Channel;
 
-export class AmqplibAdapter extends Adapter {
+class AmqplibAdapter extends Adapter {
 
     public readonly uid: string;
     public readonly requestsTimeout: number;
@@ -73,7 +75,9 @@ export class AmqplibAdapter extends Adapter {
 
         const prefix = opts.key || "socket.io";
 
-        this.channel = prefix + "#" + nsp.name + "#";
+        this.channel = prefix + "-message";
+
+        this.init()
     }
 
     async init() {
@@ -113,8 +117,8 @@ export class AmqplibAdapter extends Adapter {
                 if (this.uid === uid) return debug("ignore same uid");
 
                 switch (type) {
-                    case RequestMethod.addAll: {
-                        super.addAll.apply(this, args);
+                    case RequestMethod.add: {
+                        super.add.apply(this, args);
                         break;
                     }
                     case RequestMethod.addSockets: {
@@ -165,7 +169,6 @@ export class AmqplibAdapter extends Adapter {
                 this.emit("error", error);
             }
             
-            __mqpub.ack(msg);
         }
     }
 
@@ -177,9 +180,9 @@ export class AmqplibAdapter extends Adapter {
      * @param {Set<Room>} rooms   a set of rooms
      * @public
      */
-    public async addAll(id: SocketId, rooms: Set<Room>): Promise<void> {
-        this.publish(msgpack.encode([RequestMethod.addAll, this.uid, id, rooms]))
-        super.addAll(id, rooms);
+    public async add(id: SocketId, rooms: Set<Room>): Promise<void> {
+        this.publish(msgpack.encode([RequestMethod.add, this.uid, id, rooms]))
+        super.add(id, rooms);
     }
     /**
      * Removes a socket from a room.
@@ -272,3 +275,5 @@ export class AmqplibAdapter extends Adapter {
         super.disconnectSockets(opts, close);
     }
 }
+
+export = createAdapter;

@@ -1,6 +1,9 @@
 import { Namespace } from "socket.io";
-import { Adapter, BroadcastOptions, Room, SocketId } from "socket.io-adapter";
-export interface AmqplibAdapterOptions {
+declare const Adapter: any;
+declare type BroadcastOptions = any;
+declare type Room = string;
+declare type SocketId = string;
+interface AmqplibAdapterOptions {
     /**
      * the name of the key to pub/sub events on as prefix
      * @default socket.io
@@ -12,8 +15,8 @@ export interface AmqplibAdapterOptions {
      */
     requestsTimeout: number;
 }
-export declare function createAdapter(uri: string, opts?: Partial<AmqplibAdapterOptions>): (nsp: Namespace) => AmqplibAdapter;
-export declare class AmqplibAdapter extends Adapter {
+declare function createAdapter(uri: string, opts?: Partial<AmqplibAdapterOptions>): (nsp: Namespace) => AmqplibAdapter;
+declare class AmqplibAdapter extends Adapter {
     private uri;
     private opts;
     readonly uid: string;
@@ -31,7 +34,7 @@ export declare class AmqplibAdapter extends Adapter {
      * @param {Set<Room>} rooms   a set of rooms
      * @public
      */
-    addAll(id: SocketId, rooms: Set<Room>): Promise<void>;
+    add(id: SocketId, rooms: Set<Room>): Promise<void>;
     /**
      * Removes a socket from a room.
      *
@@ -80,3 +83,4 @@ export declare class AmqplibAdapter extends Adapter {
      */
     disconnectSockets(opts: BroadcastOptions, close: boolean): Promise<void>;
 }
+export = createAdapter;
