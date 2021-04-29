@@ -1,9 +1,11 @@
 import { Namespace } from "socket.io";
+import { RedisOptions } from "ioredis";
 declare const Adapter: any;
 declare type BroadcastOptions = any;
 declare type Room = string;
 declare type SocketId = string;
-interface AmqplibAdapterOptions {
+declare type CustomHook = (data: any, cb: Function) => void;
+interface AmqplibAdapterOptions extends RedisOptions {
     /**
      * the name of the key to pub/sub events on as prefix
      * @default socket.io
@@ -17,14 +19,19 @@ interface AmqplibAdapterOptions {
 }
 declare function createAdapter(uri: string, opts?: Partial<AmqplibAdapterOptions>): (nsp: Namespace) => AmqplibAdapter;
 declare class AmqplibAdapter extends Adapter {
+    private nsp;
     private uri;
     private opts;
     readonly uid: string;
     readonly requestsTimeout: number;
     private readonly channel;
-    private requests;
+    private readonly requests;
+    customHook: CustomHook;
     constructor(nsp: Namespace, uri: string, opts?: Partial<AmqplibAdapterOptions>);
     init(): Promise<void>;
+    private survivalHeartbeat;
+    /**获取所有存活主机的数量 */
+    private allSurvivalCount;
     private publish;
     private onmessage;
     /**
@@ -62,25 +69,33 @@ declare class AmqplibAdapter extends Adapter {
      */
     broadcast(packet: any, opts: BroadcastOptions): Promise<void>;
     /**
-     * Makes the matching socket instances join the specified rooms
+     * Gets a list of clients by sid.
      *
-     * @param opts - the filters to apply
-     * @param rooms - the rooms to join
+     * @param {Array} explicit set of rooms to check.
      */
-    addSockets(opts: BroadcastOptions, rooms: Room[]): Promise<void>;
+    clients(rooms: Room[]): Promise<SocketId[]>;
     /**
-     * Makes the matching socket instances leave the specified rooms
+     * Gets the list of rooms a given client has joined.
      *
-     * @param opts - the filters to apply
-     * @param rooms - the rooms to leave
+     * @param {String} client id
      */
-    delSockets(opts: BroadcastOptions, rooms: Room[]): Promise<void>;
+    clientRooms(id: SocketId): Promise<Room[] | undefined>;
     /**
-     * Makes the matching socket instances disconnect
+     * Gets the list of all rooms (accross every node)
      *
-     * @param opts - the filters to apply
-     * @param close - whether to close the underlying connection
      */
-    disconnectSockets(opts: BroadcastOptions, close: boolean): Promise<void>;
+    allRooms(): Promise<string[]>;
+    /**
+     * Sends a new custom request to other nodes
+     *
+     * @param {Object} data (no binary)
+     */
+    customRequest(data: any): Promise<any[]>;
+    /**
+     * Makes the socket with the given id to be disconnected forcefully
+     * @param {String} socket id
+     * @param {Boolean} close if `true`, closes the underlying connection
+     */
+    remoteDisconnec(id: SocketId, close: boolean): Promise<void>;
 }
 export = createAdapter;

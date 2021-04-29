@@ -6,6 +6,7 @@
     "allowJs": false,                             /* Allow javascript files to be compiled. */
     "rootDir": "./src",                             /* Specify the root directory of input files. Use to control the output directory structure with --outDir. */
     "strict": true,                                 /* Enable all strict type-checking options. */
+    "esModuleInterop": true,  
   },
   "include": [
     "./src/**/*"

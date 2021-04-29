@@ -1,14 +1,19 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 /*
  * @Author: Summer
  * @LastEditors: Summer
  * @Description:
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-04-16 11:50:40 +0800
+ * @LastEditTime: 2021-04-29 16:31:19 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 const uid2 = require("uid2");
 const amqplib_1 = require("amqplib");
+const ioredis_1 = __importDefault(require("ioredis"));
+const os_1 = require("os");
 const msgpack = require("notepack.io");
 const Adapter = require("socket.io-adapter");
 const debug = require("debug")("socket.io-amqplib");
@@ -18,29 +23,42 @@ var RequestMethod;
     RequestMethod[RequestMethod["del"] = 1] = "del";
     RequestMethod[RequestMethod["delAll"] = 2] = "delAll";
     RequestMethod[RequestMethod["broadcast"] = 3] = "broadcast";
-    RequestMethod[RequestMethod["sockets"] = 4] = "sockets";
-    RequestMethod[RequestMethod["socketRooms"] = 5] = "socketRooms";
-    RequestMethod[RequestMethod["fetchSockets"] = 6] = "fetchSockets";
-    RequestMethod[RequestMethod["addSockets"] = 7] = "addSockets";
-    RequestMethod[RequestMethod["delSockets"] = 8] = "delSockets";
-    RequestMethod[RequestMethod["disconnectSockets"] = 9] = "disconnectSockets";
+    RequestMethod[RequestMethod["clients"] = 4] = "clients";
+    RequestMethod[RequestMethod["clientRooms"] = 5] = "clientRooms";
+    RequestMethod[RequestMethod["allRooms"] = 6] = "allRooms";
+    RequestMethod[RequestMethod["customRequest"] = 7] = "customRequest";
+    RequestMethod[RequestMethod["remoteDisconnec"] = 8] = "remoteDisconnec";
     ////////////////////
-    RequestMethod[RequestMethod["response"] = 10] = "response";
+    RequestMethod[RequestMethod["response"] = 9] = "response";
 })(RequestMethod || (RequestMethod = {}));
+ioredis_1.default.prototype.keys = async function (pattern) {
+    let cursor = 0;
+    let list = [];
+    do {
+        let res = await this.scan(cursor, "match", pattern, "count", 2000);
+        cursor = +res[0];
+        list = list.concat(res[1]);
+    } while (cursor != 0);
+    return list;
+};
 function createAdapter(uri, opts = {}) {
     // handle options only
     return function (nsp) {
         return new AmqplibAdapter(nsp, uri, opts);
     };
 }
+const REDIS_SURVIVAL_KEY = `socket.io-survival:${os_1.hostname()}:${process.pid}`;
 let __mqsub;
 let __mqpub;
+let redisdata;
 class AmqplibAdapter extends Adapter {
     constructor(nsp, uri, opts = {}) {
         super(nsp);
+        this.nsp = nsp;
         this.uri = uri;
         this.opts = opts;
         this.requests = new Map();
+        this.customHook = (data, cb) => cb(null);
         this.uid = uid2(6);
         this.requestsTimeout = this.opts.requestsTimeout || 5000;
         const prefix = opts.key || "socket.io";
@@ -48,7 +66,11 @@ class AmqplibAdapter extends Adapter {
         this.init();
     }
     async init() {
+        var _a;
         try {
+            redisdata = new ioredis_1.default(this.opts);
+            if ((_a = this.opts) === null || _a === void 0 ? void 0 : _a.password)
+                redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"));
             const createChannel = async () => {
                 let __mqconnect = await amqplib_1.connect(this.uri);
                 return __mqconnect.createChannel();
@@ -61,10 +83,21 @@ class AmqplibAdapter extends Adapter {
             await __mqsub.consume(qok.queue, this.onmessage.bind(this), { noAck: true });
             __mqpub = await createChannel();
             await __mqpub.assertExchange(this.channel, "fanout", { durable: false });
+            setInterval(this.survivalHeartbeat.bind(this), 1000);
         }
         catch (error) {
             this.emit("error", error);
         }
+    }
+    survivalHeartbeat() {
+        if (redisdata) {
+            redisdata.set(REDIS_SURVIVAL_KEY, 1, "ex", 2);
+        }
+    }
+    /**获取所有存活主机的数量 */
+    async allSurvivalCount() {
+        let keys = await redisdata.keys(`socket.io-survival:*`);
+        return keys.length;
     }
     async publish(msg) {
         if (__mqpub) {
@@ -72,6 +105,7 @@ class AmqplibAdapter extends Adapter {
         }
     }
     async onmessage(msg) {
+        var _a;
         if (msg && msg.content) {
             try {
                 const args = msgpack.decode(msg.content);
@@ -82,10 +116,6 @@ class AmqplibAdapter extends Adapter {
                 switch (type) {
                     case RequestMethod.add: {
                         super.add.apply(this, args);
-                        break;
-                    }
-                    case RequestMethod.addSockets: {
-                        super.addSockets.apply(this, args);
                         break;
                     }
                     case RequestMethod.broadcast: {
@@ -100,27 +130,46 @@ class AmqplibAdapter extends Adapter {
                         super.delAll.apply(this, args);
                         break;
                     }
-                    case RequestMethod.delSockets: {
-                        super.delSockets.apply(this, args);
+                    case RequestMethod.customRequest: {
+                        let [requestid, __data] = args;
+                        this.customHook(__data, (data) => {
+                            this.publish(msgpack.encode([RequestMethod.response, uid, requestid, data]));
+                        });
                         break;
                     }
-                    case RequestMethod.disconnectSockets: {
-                        super.disconnectSockets.apply(this, args);
+                    case RequestMethod.remoteDisconnec: {
+                        let [requestid, id, close] = args;
+                        var socket = this.nsp.sockets.get(id);
+                        if (!socket) {
+                            return;
+                        }
+                        socket.disconnect(close);
+                        this.publish(msgpack.encode([RequestMethod.response, uid, requestid, 1]));
                         break;
                     }
-                    case RequestMethod.fetchSockets: {
-                        super.fetchSockets.apply(this, args);
+                    case RequestMethod.allRooms: {
+                        let [requestid] = args;
+                        let rooms = Object.keys(this.rooms);
+                        this.publish(msgpack.encode([RequestMethod.response, uid, requestid, rooms]));
                         break;
                     }
-                    case RequestMethod.socketRooms: {
-                        super.socketRooms.apply(this, args);
+                    case RequestMethod.clientRooms: {
+                        let [requestid, id] = args;
+                        let rooms = super.clientRooms.apply(this, id);
+                        this.publish(msgpack.encode([RequestMethod.response, uid, requestid, rooms]));
                         break;
                     }
-                    case RequestMethod.sockets: {
-                        super.sockets.apply(this, args);
+                    case RequestMethod.clients: {
+                        let [requestid, rooms] = args;
+                        let clients = super.clients.apply(this, rooms);
+                        this.publish(msgpack.encode([RequestMethod.response, uid, requestid, clients]));
                         break;
                     }
                     case RequestMethod.response: {
+                        if (this.uid == uid) {
+                            let [requestid, result] = args;
+                            (_a = this.requests.get(requestid)) === null || _a === void 0 ? void 0 : _a.call(this, result);
+                        }
                         break;
                     }
                     default:
@@ -178,60 +227,134 @@ class AmqplibAdapter extends Adapter {
         this.publish(msgpack.encode([RequestMethod.broadcast, this.uid, packet, opts]));
         super.broadcast(packet, opts);
     }
-    // /**
-    //  * Gets a list of sockets by sid.
-    //  *
-    //  * @param {Set<Room>} rooms   the explicit set of rooms to check.
-    //  */
-    // public async sockets(rooms: Set<Room>): Promise<Set<SocketId>> {
-    //     const requestId = uid2(6);
-    //     return;
-    // }
-    // /**
-    //  * Gets the list of rooms a given socket has joined.
-    //  *
-    //  * @param {SocketId} id   the socket id
-    //  */
-    // public async remoteSocketRooms(id: SocketId): Promise<Set<Room> | undefined> {
-    //     return;
-    // }
-    // /**
-    //  * Returns the matching socket instances
-    //  *
-    //  * @param opts - the filters to apply
-    //  */
-    // public async fetchSockets(opts: BroadcastOptions): Promise<any[]> {
-    //     return;
-    // }
     /**
-     * Makes the matching socket instances join the specified rooms
+     * Gets a list of clients by sid.
      *
-     * @param opts - the filters to apply
-     * @param rooms - the rooms to join
+     * @param {Array} explicit set of rooms to check.
      */
-    async addSockets(opts, rooms) {
-        this.publish(msgpack.encode([RequestMethod.addSockets, this.uid, opts, rooms]));
-        super.addSockets(opts, rooms);
+    clients(rooms) {
+        return new Promise(async (resolve, reject) => {
+            let requestoutid = setTimeout(_ => reject("Waiting for MQ to return [clients] message timed out"), this.requestsTimeout);
+            let requestid = uid2(6);
+            let servercount = await this.allSurvivalCount();
+            let result = [];
+            let callback = function (clients) {
+                if (--servercount > 0) {
+                    result = result.concat(clients);
+                }
+                else {
+                    this.requests.delete(requestid);
+                    clearInterval(requestoutid);
+                    result = result.concat(clients);
+                    resolve([...new Set(result)]);
+                }
+            };
+            let msg = msgpack.encode([RequestMethod.clients, this.uid, requestid, [...rooms]]);
+            this.publish(msg);
+            this.requests.set(requestid, callback);
+        });
     }
     /**
-     * Makes the matching socket instances leave the specified rooms
+     * Gets the list of rooms a given client has joined.
      *
-     * @param opts - the filters to apply
-     * @param rooms - the rooms to leave
+     * @param {String} client id
      */
-    async delSockets(opts, rooms) {
-        this.publish(msgpack.encode([RequestMethod.delSockets, this.uid, opts, rooms]));
-        super.delSockets(opts, rooms);
+    clientRooms(id) {
+        return new Promise(async (resolve, reject) => {
+            let requestoutid = setTimeout(_ => reject("Waiting for MQ to return [clientRooms] message timed out"), this.requestsTimeout);
+            let requestid = uid2(6);
+            let servercount = await this.allSurvivalCount();
+            let result = [];
+            let callback = function (rooms) {
+                if (--servercount > 0) {
+                    result = result.concat(rooms);
+                }
+                else {
+                    this.requests.delete(requestid);
+                    clearInterval(requestoutid);
+                    result = result.concat(rooms);
+                    resolve([...new Set(result)]);
+                }
+            };
+            let msg = msgpack.encode([RequestMethod.clientRooms, this.uid, requestid, id]);
+            this.publish(msg);
+            this.requests.set(requestid, callback);
+        });
     }
     /**
-     * Makes the matching socket instances disconnect
+     * Gets the list of all rooms (accross every node)
      *
-     * @param opts - the filters to apply
-     * @param close - whether to close the underlying connection
      */
-    async disconnectSockets(opts, close) {
-        this.publish(msgpack.encode([RequestMethod.disconnectSockets, this.uid, opts, close]));
-        super.disconnectSockets(opts, close);
+    allRooms() {
+        return new Promise(async (resolve, reject) => {
+            let requestoutid = setTimeout(_ => reject("Waiting for MQ to return [allRooms] message timed out"), this.requestsTimeout);
+            let requestid = uid2(6);
+            let servercount = await this.allSurvivalCount();
+            let result = [];
+            let callback = function (rooms) {
+                if (--servercount > 0) {
+                    result = result.concat(rooms);
+                }
+                else {
+                    this.requests.delete(requestid);
+                    clearInterval(requestoutid);
+                    result = result.concat(rooms);
+                    resolve([...new Set(result)]);
+                }
+            };
+            let msg = msgpack.encode([RequestMethod.allRooms, this.uid, requestid]);
+            this.publish(msg);
+            this.requests.set(requestid, callback);
+        });
+    }
+    /**
+     * Sends a new custom request to other nodes
+     *
+     * @param {Object} data (no binary)
+     */
+    customRequest(data) {
+        return new Promise(async (resolve, reject) => {
+            let requestoutid = setTimeout(_ => reject("Waiting for MQ to return [customRequest] message timed out"), this.requestsTimeout);
+            let requestid = uid2(6);
+            let servercount = await this.allSurvivalCount();
+            let result = [];
+            let callback = function (data) {
+                if (--servercount > 0) {
+                    result.push(data);
+                }
+                else {
+                    this.requests.delete(requestid);
+                    clearInterval(requestoutid);
+                    result.push(data);
+                    resolve(result);
+                }
+            };
+            let msg = msgpack.encode([RequestMethod.customRequest, this.uid, requestid, data]);
+            this.publish(msg);
+            this.requests.set(requestid, callback);
+        });
+    }
+    /**
+     * Makes the socket with the given id to be disconnected forcefully
+     * @param {String} socket id
+     * @param {Boolean} close if `true`, closes the underlying connection
+     */
+    remoteDisconnec(id, close) {
+        return new Promise(async (resolve, reject) => {
+            let requestoutid = setTimeout(_ => reject("Waiting for MQ to return [remoteDisconnec] message timed out"), this.requestsTimeout);
+            let requestid = uid2(6);
+            let servercount = await this.allSurvivalCount();
+            let callback = function (result) {
+                if (--servercount > 0) { }
+                else {
+                    this.requests.delete(requestid);
+                    clearInterval(requestoutid);
+                    resolve();
+                }
+            };
+            this.publish(msgpack.encode([RequestMethod.remoteDisconnec, this.uid, requestid, id, close]));
+            this.requests.set(requestid, callback);
+        });
     }
 }
 module.exports = createAdapter;
