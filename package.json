@@ -1,7 +1,7 @@
 {
   "name": "socket.io-amqplib",
-  "version": "3.0.0",
-  "description": "使用　amqplib　作为　SocketIO 的消息中间件",
+  "version": "3.0.1",
+  "description": "使用 amqplib 作为 SocketIO 的消息中间件, 提供比 redis 更稳定可靠的消息机制",
   "main": "./dist/index.js",
   "types": "./types/index.d.ts",
   "scripts": {
@@ -13,8 +13,10 @@
     "type": "git",
     "url": "git+https://github.com/mytwz/socket.io-amqplib.git"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "socket.io", "amqplib", "socket.io-adapter", "socket.io-parser", "socket.io-redis", "消息中间件", "mq", "MQ", "socket", "分布式", "集群"
+  ],
+  "author": "summer.li",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/mytwz/socket.io-amqplib/issues"
