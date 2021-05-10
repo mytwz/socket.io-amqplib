@@ -4,7 +4,7 @@
  * @LastEditors: Summer
  * @Description: 
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-05-10 11:37:35 +0800
+ * @LastEditTime: 2021-05-10 11:43:36 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 import uid2 = require("uid2");
@@ -103,6 +103,14 @@ class AmqplibAdapter extends Adapter {
 
     async init() {
         clearInterval(this.survivalid)
+        try {
+            if(redisdata) redisdata.disconnect()
+            if(__mqsub) __mqsub.close();
+            if(__mqpub) __mqpub.close();
+        } catch (error) {
+            
+        }
+        
         redisdata = new ioredis(this.opts);
         if(this.opts?.password) redisdata.auth(this.opts.password).then(_=> debug("redis", "Password verification succeeded"))
         
@@ -110,7 +118,7 @@ class AmqplibAdapter extends Adapter {
             let __mqconnect = await connect(this.uri);
             return __mqconnect.createChannel();
         }
-
+        
         __mqsub = await createChannel();
         await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
         let qok = await __mqsub.assertQueue("", { exclusive: true }); debug("QOK", qok);

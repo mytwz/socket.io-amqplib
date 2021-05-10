@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
  * @LastEditors: Summer
  * @Description:
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-05-10 11:37:35 +0800
+ * @LastEditTime: 2021-05-10 11:43:36 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 const uid2 = require("uid2");
@@ -71,6 +71,16 @@ class AmqplibAdapter extends Adapter {
     async init() {
         var _a;
         clearInterval(this.survivalid);
+        try {
+            if (redisdata)
+                redisdata.disconnect();
+            if (__mqsub)
+                __mqsub.close();
+            if (__mqpub)
+                __mqpub.close();
+        }
+        catch (error) {
+        }
         redisdata = new ioredis_1.default(this.opts);
         if ((_a = this.opts) === null || _a === void 0 ? void 0 : _a.password)
             redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"));
