@@ -26,12 +26,16 @@ declare class AmqplibAdapter extends Adapter {
     readonly requestsTimeout: number;
     private readonly channel;
     private readonly requests;
+    private readonly msgbuffers;
+    private survivalid;
+    private ispublish;
     customHook: CustomHook;
     constructor(nsp: Namespace, uri: string, opts?: Partial<AmqplibAdapterOptions>);
     init(): Promise<void>;
     private survivalHeartbeat;
     /**获取所有存活主机的数量 */
     private allSurvivalCount;
+    private startPublish;
     private publish;
     private onmessage;
     /**

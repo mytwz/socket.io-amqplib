@@ -4,7 +4,7 @@
  * @LastEditors: Summer
  * @Description: 
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-04-29 16:31:19 +0800
+ * @LastEditTime: 2021-05-10 11:37:35 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 import uid2 = require("uid2");
@@ -77,12 +77,14 @@ let __mqpub: Channel;
 let redisdata: Redis;
 
 class AmqplibAdapter extends Adapter {
-
     public readonly uid: string;
     public readonly requestsTimeout: number;
 
     private readonly channel: string;
     private readonly requests: Map<string, Function> = new Map();
+    private readonly msgbuffers: Buffer[] = [];
+    private survivalid:any = 0;
+    private ispublish: boolean = false;
 
     public customHook: CustomHook = (data: any, cb: Function) => cb(null);
 
@@ -100,29 +102,27 @@ class AmqplibAdapter extends Adapter {
     }
 
     async init() {
-        try {
-
-            redisdata = new ioredis(this.opts);
-            if(this.opts?.password) redisdata.auth(this.opts.password).then(_=> debug("redis", "Password verification succeeded"))
-            
-            const createChannel = async () => {
-                let __mqconnect = await connect(this.uri);
-                return __mqconnect.createChannel();
-            }
-
-            __mqsub = await createChannel();
-            await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
-            let qok = await __mqsub.assertQueue("", { exclusive: true }); debug("QOK", qok);
-            await __mqsub.bindQueue(qok.queue, this.channel, "");
-            await __mqsub.consume(qok.queue, this.onmessage.bind(this), { noAck: true })
-
-            __mqpub = await createChannel();
-            await __mqpub.assertExchange(this.channel, "fanout", { durable: false });
-            
-            setInterval(this.survivalHeartbeat.bind(this), 1000);
-        } catch (error) {
-            this.emit("error", error);
+        clearInterval(this.survivalid)
+        redisdata = new ioredis(this.opts);
+        if(this.opts?.password) redisdata.auth(this.opts.password).then(_=> debug("redis", "Password verification succeeded"))
+        
+        const createChannel = async () => {
+            let __mqconnect = await connect(this.uri);
+            return __mqconnect.createChannel();
         }
+
+        __mqsub = await createChannel();
+        await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
+        let qok = await __mqsub.assertQueue("", { exclusive: true }); debug("QOK", qok);
+        await __mqsub.bindQueue(qok.queue, this.channel, "");
+        await __mqsub.consume(qok.queue, this.onmessage.bind(this), { noAck: true })
+
+        __mqpub = await createChannel();
+        await __mqpub.assertExchange(this.channel, "fanout", { durable: false });
+        
+        this.survivalid = setInterval(this.survivalHeartbeat.bind(this), 1000);
+        this.ispublish = false;
+        this.startPublish();
     }
     
     private survivalHeartbeat(){
@@ -137,12 +137,26 @@ class AmqplibAdapter extends Adapter {
         return keys.length;
     }
 
-    private async publish(msg: Buffer): Promise<void> {
-        if (__mqpub) {
-            await __mqpub.publish(this.channel, "", msg)
+    private startPublish(){
+        if(this.ispublish === false && __mqpub){
+            let msg = null;
+            try {
+                this.ispublish = true;
+                while (msg = this.msgbuffers.pop()) {
+                    __mqpub.publish(this.channel, "", msg);
+                }
+                this.ispublish = false;
+            } catch (error) {
+                msg && this.msgbuffers.unshift(msg)
+                this.init();
+            }
         }
     }
 
+    private async publish(msg: Buffer): Promise<void> {
+        this.msgbuffers.push(msg);
+        this.startPublish();
+    }
 
     private async onmessage(msg: ConsumeMessage | null): Promise<void> {
         if (msg && msg.content) {
