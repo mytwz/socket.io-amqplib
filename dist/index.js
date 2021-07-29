@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
  * @LastEditors: Summer
  * @Description:
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-05-10 11:43:36 +0800
+ * @LastEditTime: 2021-07-29 17:14:23 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 const uid2 = require("uid2");
@@ -30,6 +30,7 @@ var RequestMethod;
     RequestMethod[RequestMethod["remoteDisconnec"] = 8] = "remoteDisconnec";
     ////////////////////
     RequestMethod[RequestMethod["response"] = 9] = "response";
+    RequestMethod[RequestMethod["checkChannel"] = 10] = "checkChannel";
 })(RequestMethod || (RequestMethod = {}));
 ioredis_1.default.prototype.keys = async function (pattern) {
     let cursor = 0;
@@ -60,6 +61,8 @@ class AmqplibAdapter extends Adapter {
         this.requests = new Map();
         this.msgbuffers = [];
         this.survivalid = 0;
+        /**检查通道可用性 */
+        this.checkchannelid = 0;
         this.ispublish = false;
         this.customHook = (data, cb) => cb(null);
         this.uid = uid2(6);
@@ -71,16 +74,29 @@ class AmqplibAdapter extends Adapter {
     async init() {
         var _a;
         clearInterval(this.survivalid);
+        clearTimeout(this.checkchannelid);
         try {
             if (redisdata)
                 redisdata.disconnect();
+        }
+        catch (error) {
+            console.log(REDIS_SURVIVAL_KEY, error);
+        }
+        try {
             if (__mqsub)
                 __mqsub.close();
+        }
+        catch (error) {
+            console.log(REDIS_SURVIVAL_KEY, error);
+        }
+        try {
             if (__mqpub)
                 __mqpub.close();
         }
         catch (error) {
+            console.log(REDIS_SURVIVAL_KEY, error);
         }
+        redisdata = __mqsub = __mqpub = null;
         redisdata = new ioredis_1.default(this.opts);
         if ((_a = this.opts) === null || _a === void 0 ? void 0 : _a.password)
             redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"));
@@ -98,6 +114,16 @@ class AmqplibAdapter extends Adapter {
         await __mqpub.assertExchange(this.channel, "fanout", { durable: false });
         this.survivalid = setInterval(this.survivalHeartbeat.bind(this), 1000);
         this.ispublish = false;
+        this.sendCheckChannel();
+        console.log(`[${REDIS_SURVIVAL_KEY}]建立 MQ 消息通道完成`, qok);
+    }
+    checkChannel() {
+        console.log(`[${REDIS_SURVIVAL_KEY}]MQ 消息通道超时响应，开始重新建立连接`);
+        this.init();
+    }
+    sendCheckChannel() {
+        this.msgbuffers.unshift(msgpack.encode([RequestMethod.checkChannel, this.uid]));
+        this.checkchannelid = setTimeout(this.checkChannel.bind(this), this.requestsTimeout);
         this.startPublish();
     }
     survivalHeartbeat() {
@@ -123,6 +149,7 @@ class AmqplibAdapter extends Adapter {
             catch (error) {
                 msg && this.msgbuffers.unshift(msg);
                 this.init();
+                console.log(REDIS_SURVIVAL_KEY, error);
             }
         }
     }
@@ -137,8 +164,13 @@ class AmqplibAdapter extends Adapter {
                 const args = msgpack.decode(msg.content);
                 const type = args.shift();
                 const uid = args.shift();
-                if (this.uid === uid)
+                if (this.uid === uid) {
+                    if (type == RequestMethod.checkChannel) {
+                        clearTimeout(this.checkchannelid);
+                        setTimeout(this.sendCheckChannel.bind(this), 1000);
+                    }
                     return debug("ignore same uid");
+                }
                 switch (type) {
                     case RequestMethod.add: {
                         super.add.apply(this, args);

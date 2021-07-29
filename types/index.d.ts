@@ -28,10 +28,14 @@ declare class AmqplibAdapter extends Adapter {
     private readonly requests;
     private readonly msgbuffers;
     private survivalid;
+    /**检查通道可用性 */
+    private checkchannelid;
     private ispublish;
     customHook: CustomHook;
     constructor(nsp: Namespace, uri: string, opts?: Partial<AmqplibAdapterOptions>);
     init(): Promise<void>;
+    private checkChannel;
+    private sendCheckChannel;
     private survivalHeartbeat;
     /**获取所有存活主机的数量 */
     private allSurvivalCount;
