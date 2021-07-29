@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
  * @LastEditors: Summer
  * @Description:
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-07-29 17:14:23 +0800
+ * @LastEditTime: 2021-07-29 17:34:08 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 const uid2 = require("uid2");
@@ -115,10 +115,10 @@ class AmqplibAdapter extends Adapter {
         this.survivalid = setInterval(this.survivalHeartbeat.bind(this), 1000);
         this.ispublish = false;
         this.sendCheckChannel();
-        console.log(`[${REDIS_SURVIVAL_KEY}]建立 MQ 消息通道完成`, qok);
+        console.log(`[${REDIS_SURVIVAL_KEY}]["建立 MQ 消息通道完成", ${JSON.stringify(qok)}]`);
     }
     checkChannel() {
-        console.log(`[${REDIS_SURVIVAL_KEY}]MQ 消息通道超时响应，开始重新建立连接`);
+        console.log(`[${REDIS_SURVIVAL_KEY}]["MQ 消息通道超时响应，开始重新建立连接"]`);
         this.init();
     }
     sendCheckChannel() {
