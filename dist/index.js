@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
  * @LastEditors: Summer
  * @Description:
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-07-29 17:34:08 +0800
+ * @LastEditTime: 2021-07-29 18:00:32 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 const uid2 = require("uid2");
@@ -49,6 +49,7 @@ function createAdapter(uri, opts = {}) {
     };
 }
 const REDIS_SURVIVAL_KEY = `socket.io-survival:${os_1.hostname()}:${process.pid}`;
+let __mqconnect;
 let __mqsub;
 let __mqpub;
 let redisdata;
@@ -83,6 +84,13 @@ class AmqplibAdapter extends Adapter {
             console.log(REDIS_SURVIVAL_KEY, error);
         }
         try {
+            if (__mqconnect)
+                __mqconnect.close();
+        }
+        catch (error) {
+            console.log(REDIS_SURVIVAL_KEY, error);
+        }
+        try {
             if (__mqsub)
                 __mqsub.close();
         }
@@ -100,17 +108,14 @@ class AmqplibAdapter extends Adapter {
         redisdata = new ioredis_1.default(this.opts);
         if ((_a = this.opts) === null || _a === void 0 ? void 0 : _a.password)
             redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"));
-        const createChannel = async () => {
-            let __mqconnect = await amqplib_1.connect(this.uri);
-            return __mqconnect.createChannel();
-        };
-        __mqsub = await createChannel();
+        __mqconnect = await amqplib_1.connect(this.uri);
+        __mqsub = await __mqconnect.createChannel();
         await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
         let qok = await __mqsub.assertQueue("", { exclusive: true });
         debug("QOK", qok);
         await __mqsub.bindQueue(qok.queue, this.channel, "");
         await __mqsub.consume(qok.queue, this.onmessage.bind(this), { noAck: true });
-        __mqpub = await createChannel();
+        __mqpub = await __mqconnect.createChannel();
         await __mqpub.assertExchange(this.channel, "fanout", { durable: false });
         this.survivalid = setInterval(this.survivalHeartbeat.bind(this), 1000);
         this.ispublish = false;

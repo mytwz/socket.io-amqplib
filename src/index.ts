@@ -4,12 +4,12 @@
  * @LastEditors: Summer
  * @Description: 
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-07-29 17:34:08 +0800
+ * @LastEditTime: 2021-07-29 18:00:32 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 import uid2 = require("uid2");
 import { Namespace } from "socket.io";
-import { connect, Channel, ConsumeMessage } from "amqplib";
+import { connect, Channel, ConsumeMessage, Connection } from "amqplib";
 import { Redis, RedisOptions } from "ioredis"
 import ioredis from "ioredis"
 import { hostname } from "os";
@@ -73,7 +73,7 @@ function createAdapter(uri: string, opts: Partial<AmqplibAdapterOptions> = {}) {
 
 const REDIS_SURVIVAL_KEY = `socket.io-survival:${hostname()}:${process.pid}`
 
-
+let __mqconnect: Connection;
 let __mqsub: Channel;
 let __mqpub: Channel;
 let redisdata: Redis;
@@ -114,6 +114,10 @@ class AmqplibAdapter extends Adapter {
         } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
 
         try {
+            if (__mqconnect) __mqconnect.close();
+        } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
+
+        try {
             if (__mqsub) __mqsub.close();
         } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
 
@@ -125,19 +129,15 @@ class AmqplibAdapter extends Adapter {
 
         redisdata = new ioredis(this.opts);
         if (this.opts?.password) redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"))
-
-        const createChannel = async () => {
-            let __mqconnect = await connect(this.uri);
-            return __mqconnect.createChannel();
-        }
-
-        __mqsub = await createChannel();
+        __mqconnect = await connect(this.uri);
+        
+        __mqsub = await __mqconnect.createChannel();
         await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
         let qok = await __mqsub.assertQueue("", { exclusive: true }); debug("QOK", qok);
         await __mqsub.bindQueue(qok.queue, this.channel, "");
         await __mqsub.consume(qok.queue, this.onmessage.bind(this), { noAck: true })
 
-        __mqpub = await createChannel();
+        __mqpub = await __mqconnect.createChannel();
         await __mqpub.assertExchange(this.channel, "fanout", { durable: false });
 
         this.survivalid = setInterval(this.survivalHeartbeat.bind(this), 1000);
