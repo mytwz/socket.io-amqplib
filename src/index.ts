@@ -4,7 +4,7 @@
  * @LastEditors: Summer
  * @Description: 
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-05-10 11:43:36 +0800
+ * @LastEditTime: 2021-07-29 17:14:23 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 import uid2 = require("uid2");
@@ -20,7 +20,7 @@ const debug = require("debug")("socket.io-amqplib");
 type BroadcastOptions = any
 type Room = string;
 type SocketId = string
-type CustomHook = (data: any, cb:Function) => void;
+type CustomHook = (data: any, cb: Function) => void;
 
 enum RequestMethod {
     add = 0,
@@ -34,7 +34,9 @@ enum RequestMethod {
     customRequest,
     remoteDisconnec,
     ////////////////////
-    response
+    response,
+
+    checkChannel
 }
 
 interface AmqplibAdapterOptions extends RedisOptions {
@@ -83,7 +85,9 @@ class AmqplibAdapter extends Adapter {
     private readonly channel: string;
     private readonly requests: Map<string, Function> = new Map();
     private readonly msgbuffers: Buffer[] = [];
-    private survivalid:any = 0;
+    private survivalid: any = 0;
+    /**检查通道可用性 */
+    private checkchannelid: any = 0;
     private ispublish: boolean = false;
 
     public customHook: CustomHook = (data: any, cb: Function) => cb(null);
@@ -102,23 +106,31 @@ class AmqplibAdapter extends Adapter {
     }
 
     async init() {
+        
         clearInterval(this.survivalid)
+        clearTimeout(this.checkchannelid);
         try {
-            if(redisdata) redisdata.disconnect()
-            if(__mqsub) __mqsub.close();
-            if(__mqpub) __mqpub.close();
-        } catch (error) {
-            
-        }
-        
+            if (redisdata) redisdata.disconnect()
+        } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
+
+        try {
+            if (__mqsub) __mqsub.close();
+        } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
+
+        try {
+            if (__mqpub) __mqpub.close();
+        } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
+
+        redisdata = __mqsub = __mqpub = <any>null;
+
         redisdata = new ioredis(this.opts);
-        if(this.opts?.password) redisdata.auth(this.opts.password).then(_=> debug("redis", "Password verification succeeded"))
-        
+        if (this.opts?.password) redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"))
+
         const createChannel = async () => {
             let __mqconnect = await connect(this.uri);
             return __mqconnect.createChannel();
         }
-        
+
         __mqsub = await createChannel();
         await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
         let qok = await __mqsub.assertQueue("", { exclusive: true }); debug("QOK", qok);
@@ -127,14 +139,27 @@ class AmqplibAdapter extends Adapter {
 
         __mqpub = await createChannel();
         await __mqpub.assertExchange(this.channel, "fanout", { durable: false });
-        
+
         this.survivalid = setInterval(this.survivalHeartbeat.bind(this), 1000);
         this.ispublish = false;
+        this.sendCheckChannel();
+
+        console.log(`[${REDIS_SURVIVAL_KEY}]建立 MQ 消息通道完成`, qok)
+    }
+
+    private checkChannel() {
+        console.log(`[${REDIS_SURVIVAL_KEY}]MQ 消息通道超时响应，开始重新建立连接`);
+        this.init();
+    }
+
+    private sendCheckChannel() {
+        this.msgbuffers.unshift(msgpack.encode([RequestMethod.checkChannel, this.uid]));
+        this.checkchannelid = setTimeout(this.checkChannel.bind(this), this.requestsTimeout);
         this.startPublish();
     }
-    
-    private survivalHeartbeat(){
-        if(redisdata){
+
+    private survivalHeartbeat() {
+        if (redisdata) {
             redisdata.set(REDIS_SURVIVAL_KEY, 1, "ex", 2);
         }
     }
@@ -145,8 +170,8 @@ class AmqplibAdapter extends Adapter {
         return keys.length;
     }
 
-    private startPublish(){
-        if(this.ispublish === false && __mqpub){
+    private startPublish() {
+        if (this.ispublish === false && __mqpub) {
             let msg = null;
             try {
                 this.ispublish = true;
@@ -157,6 +182,7 @@ class AmqplibAdapter extends Adapter {
             } catch (error) {
                 msg && this.msgbuffers.unshift(msg)
                 this.init();
+                console.log(REDIS_SURVIVAL_KEY, error)
             }
         }
     }
@@ -173,7 +199,13 @@ class AmqplibAdapter extends Adapter {
                 const type = args.shift();
                 const uid = args.shift();
 
-                if (this.uid === uid) return debug("ignore same uid");
+                if (this.uid === uid) {
+                    if(type == RequestMethod.checkChannel){
+                        clearTimeout(this.checkchannelid);
+                        setTimeout(this.sendCheckChannel.bind(this), 1000);
+                    }
+                    return debug("ignore same uid")
+                }
 
                 switch (type) {
                     case RequestMethod.add: {
@@ -209,7 +241,7 @@ class AmqplibAdapter extends Adapter {
                     }
                     case RequestMethod.allRooms: {
                         let [requestid] = args;
-                        let rooms =  Object.keys(this.rooms);
+                        let rooms = Object.keys(this.rooms);
                         this.publish(msgpack.encode([RequestMethod.response, uid, requestid, rooms]));
                         break;
                     }
@@ -226,7 +258,7 @@ class AmqplibAdapter extends Adapter {
                         break;
                     }
                     case RequestMethod.response: {
-                        if(this.uid == uid){
+                        if (this.uid == uid) {
                             let [requestid, result] = args;
                             this.requests.get(requestid)?.call(this, result);
                         }
@@ -239,7 +271,7 @@ class AmqplibAdapter extends Adapter {
             } catch (error) {
                 this.emit("error", error);
             }
-            
+
         }
     }
 
@@ -300,9 +332,9 @@ class AmqplibAdapter extends Adapter {
             let requestoutid = setTimeout(_ => reject("Waiting for MQ to return [clients] message timed out"), this.requestsTimeout);
             let requestid = uid2(6);
             let servercount = await this.allSurvivalCount();
-            let result:string[] = [];
-            let callback:(this: this, clients:SocketId[]) => void = function(clients: SocketId[]){
-                if(--servercount > 0){
+            let result: string[] = [];
+            let callback: (this: this, clients: SocketId[]) => void = function (clients: SocketId[]) {
+                if (--servercount > 0) {
                     result = result.concat(clients)
                 }
                 else {
@@ -317,7 +349,7 @@ class AmqplibAdapter extends Adapter {
             this.requests.set(requestid, callback);
         })
     }
-    
+
     /**
      * Gets the list of rooms a given client has joined.
      *
@@ -328,9 +360,9 @@ class AmqplibAdapter extends Adapter {
             let requestoutid = setTimeout(_ => reject("Waiting for MQ to return [clientRooms] message timed out"), this.requestsTimeout);
             let requestid = uid2(6);
             let servercount = await this.allSurvivalCount();
-            let result:string[] = [];
-            let callback:(this: this, rooms:string[]) => void = function(rooms: string[]){
-                if(--servercount > 0){
+            let result: string[] = [];
+            let callback: (this: this, rooms: string[]) => void = function (rooms: string[]) {
+                if (--servercount > 0) {
                     result = result.concat(rooms)
                 }
                 else {
@@ -345,7 +377,7 @@ class AmqplibAdapter extends Adapter {
             this.requests.set(requestid, callback);
         })
     }
-    
+
     /**
      * Gets the list of all rooms (accross every node)
      *
@@ -355,9 +387,9 @@ class AmqplibAdapter extends Adapter {
             let requestoutid = setTimeout(_ => reject("Waiting for MQ to return [allRooms] message timed out"), this.requestsTimeout);
             let requestid = uid2(6);
             let servercount = await this.allSurvivalCount();
-            let result:string[] = [];
-            let callback:(this: this, rooms:string[]) => void = function(rooms: string[]){
-                if(--servercount > 0){
+            let result: string[] = [];
+            let callback: (this: this, rooms: string[]) => void = function (rooms: string[]) {
+                if (--servercount > 0) {
                     result = result.concat(rooms)
                 }
                 else {
@@ -372,7 +404,7 @@ class AmqplibAdapter extends Adapter {
             this.requests.set(requestid, callback);
         })
     }
-    
+
     /**
      * Sends a new custom request to other nodes
      *
@@ -383,9 +415,9 @@ class AmqplibAdapter extends Adapter {
             let requestoutid = setTimeout(_ => reject("Waiting for MQ to return [customRequest] message timed out"), this.requestsTimeout);
             let requestid = uid2(6);
             let servercount = await this.allSurvivalCount();
-            let result:any[] = [];
-            let callback:(this: this, data:any) => void = function(data: any){
-                if(--servercount > 0){
+            let result: any[] = [];
+            let callback: (this: this, data: any) => void = function (data: any) {
+                if (--servercount > 0) {
                     result.push(data);
                 }
                 else {
@@ -405,14 +437,14 @@ class AmqplibAdapter extends Adapter {
      * @param {String} socket id
      * @param {Boolean} close if `true`, closes the underlying connection
      */
-    public remoteDisconnec(id:SocketId, close: boolean): Promise<void> {
+    public remoteDisconnec(id: SocketId, close: boolean): Promise<void> {
 
         return new Promise(async (resolve, reject) => {
             let requestoutid = setTimeout(_ => reject("Waiting for MQ to return [remoteDisconnec] message timed out"), this.requestsTimeout);
             let requestid = uid2(6);
             let servercount = await this.allSurvivalCount();
-            let callback:(this: this, result:boolean) => void = function(result: boolean){
-                if(--servercount > 0){ }
+            let callback: (this: this, result: boolean) => void = function (result: boolean) {
+                if (--servercount > 0) { }
                 else {
                     this.requests.delete(requestid)
                     clearInterval(requestoutid)
