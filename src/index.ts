@@ -4,7 +4,7 @@
  * @LastEditors: Summer
  * @Description: 
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-08-02 17:35:18 +0800
+ * @LastEditTime: 2021-08-02 17:43:09 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 import uid2 = require("uid2");
@@ -135,13 +135,13 @@ class AmqplibAdapter extends Adapter {
         __mqconnect = await connect(this.uri);
         
         __mqsub = await __mqconnect.createChannel();
-        await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
-        let qok = await __mqsub.assertQueue("", { exclusive: false }); debug("QOK", qok);
+        await __mqsub.assertExchange(this.channel, "fanout", { durable: false, autoDelete:true });
+        let qok = await __mqsub.assertQueue("", { exclusive: false, autoDelete:true }); debug("QOK", qok);
         await __mqsub.bindQueue(qok.queue, this.channel, "");
         await __mqsub.consume(qok.queue, this.onmessage.bind(this), { noAck: true })
 
         __mqpub = await __mqconnect.createChannel();
-        await __mqpub.assertExchange(this.channel, "fanout", { durable: false });
+        await __mqpub.assertExchange(this.channel, "fanout", { durable: false, autoDelete:true });
 
         this.survivalid = setInterval(this.survivalHeartbeat.bind(this), 1000);
         this.ispublish = false;
