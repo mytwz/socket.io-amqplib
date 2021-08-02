@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
  * @LastEditors: Summer
  * @Description:
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-07-29 18:14:38 +0800
+ * @LastEditTime: 2021-08-02 15:07:05 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 const uid2 = require("uid2");
@@ -52,7 +52,7 @@ const REDIS_SURVIVAL_KEY = `socket.io-survival:${os_1.hostname()}:${process.pid}
 let __mqconnect;
 let __mqsub;
 let __mqpub;
-let redisdata;
+let __redisdata;
 class AmqplibAdapter extends Adapter {
     constructor(nsp, uri, opts = {}) {
         super(nsp);
@@ -78,8 +78,8 @@ class AmqplibAdapter extends Adapter {
         clearInterval(this.survivalid);
         clearTimeout(this.checkchannelid);
         try {
-            if (redisdata)
-                redisdata.disconnect();
+            if (__redisdata)
+                __redisdata.disconnect();
         }
         catch (error) {
             console.log(REDIS_SURVIVAL_KEY, error);
@@ -99,16 +99,19 @@ class AmqplibAdapter extends Adapter {
             console.log(REDIS_SURVIVAL_KEY, error);
         }
         try {
-            if (__mqconnect)
+            if (__mqconnect) {
+                if (__mqconnect.connection.heartbeater)
+                    __mqconnect.connection.heartbeater.clear();
                 __mqconnect.close();
+            }
         }
         catch (error) {
             console.log(REDIS_SURVIVAL_KEY, error);
         }
-        redisdata = __mqsub = __mqpub = __mqconnect = null;
-        redisdata = new ioredis_1.default(this.opts);
+        __redisdata = __mqsub = __mqpub = __mqconnect = null;
+        __redisdata = new ioredis_1.default(this.opts);
         if ((_a = this.opts) === null || _a === void 0 ? void 0 : _a.password)
-            redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"));
+            __redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"));
         __mqconnect = await amqplib_1.connect(this.uri);
         __mqsub = await __mqconnect.createChannel();
         await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
@@ -133,13 +136,13 @@ class AmqplibAdapter extends Adapter {
         this.startPublish();
     }
     survivalHeartbeat() {
-        if (redisdata) {
-            redisdata.set(REDIS_SURVIVAL_KEY, 1, "ex", 2);
+        if (__redisdata) {
+            __redisdata.set(REDIS_SURVIVAL_KEY, 1, "ex", 2);
         }
     }
     /**获取所有存活主机的数量 */
     async allSurvivalCount() {
-        let keys = await redisdata.keys(`socket.io-survival:*`);
+        let keys = await __redisdata.keys(`socket.io-survival:*`);
         return keys.length;
     }
     startPublish() {

@@ -1,6 +1,6 @@
 {
   "name": "socket.io-amqplib",
-  "version": "3.1.6",
+  "version": "3.1.16",
   "description": "使用 amqplib 作为 SocketIO 的消息中间件, 提供比 redis 更稳定可靠的消息机制",
   "main": "./dist/index.js",
   "types": "./types/index.d.ts",

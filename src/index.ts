@@ -4,7 +4,7 @@
  * @LastEditors: Summer
  * @Description: 
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-07-29 18:14:38 +0800
+ * @LastEditTime: 2021-08-02 15:07:05 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 import uid2 = require("uid2");
@@ -76,7 +76,7 @@ const REDIS_SURVIVAL_KEY = `socket.io-survival:${hostname()}:${process.pid}`
 let __mqconnect: Connection;
 let __mqsub: Channel;
 let __mqpub: Channel;
-let redisdata: Redis;
+let __redisdata: Redis;
 
 class AmqplibAdapter extends Adapter {
     public readonly uid: string;
@@ -110,7 +110,7 @@ class AmqplibAdapter extends Adapter {
         clearInterval(this.survivalid)
         clearTimeout(this.checkchannelid);
         try {
-            if (redisdata) redisdata.disconnect()
+            if (__redisdata) __redisdata.disconnect()
         } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
 
         try {
@@ -122,13 +122,16 @@ class AmqplibAdapter extends Adapter {
         } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
 
         try {
-            if (__mqconnect) __mqconnect.close();
+            if (__mqconnect) {
+                if((<any>__mqconnect).connection.heartbeater) (<any>__mqconnect).connection.heartbeater.clear()
+                __mqconnect.close();
+            }
         } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
 
-        redisdata = __mqsub = __mqpub = __mqconnect = <any>null;
+        __redisdata = __mqsub = __mqpub = __mqconnect = <any>null;
 
-        redisdata = new ioredis(this.opts);
-        if (this.opts?.password) redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"))
+        __redisdata = new ioredis(this.opts);
+        if (this.opts?.password) __redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"))
         __mqconnect = await connect(this.uri);
         
         __mqsub = await __mqconnect.createChannel();
@@ -159,14 +162,14 @@ class AmqplibAdapter extends Adapter {
     }
 
     private survivalHeartbeat() {
-        if (redisdata) {
-            redisdata.set(REDIS_SURVIVAL_KEY, 1, "ex", 2);
+        if (__redisdata) {
+            __redisdata.set(REDIS_SURVIVAL_KEY, 1, "ex", 2);
         }
     }
 
     /**获取所有存活主机的数量 */
     private async allSurvivalCount(): Promise<number> {
-        let keys = await redisdata.keys(`socket.io-survival:*`);
+        let keys = await __redisdata.keys(`socket.io-survival:*`);
         return keys.length;
     }
 
