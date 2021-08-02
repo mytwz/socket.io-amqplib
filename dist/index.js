@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
  * @LastEditors: Summer
  * @Description:
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-08-02 15:07:05 +0800
+ * @LastEditTime: 2021-08-02 17:35:18 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 const uid2 = require("uid2");
@@ -115,7 +115,7 @@ class AmqplibAdapter extends Adapter {
         __mqconnect = await amqplib_1.connect(this.uri);
         __mqsub = await __mqconnect.createChannel();
         await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
-        let qok = await __mqsub.assertQueue("", { exclusive: true });
+        let qok = await __mqsub.assertQueue("", { exclusive: false });
         debug("QOK", qok);
         await __mqsub.bindQueue(qok.queue, this.channel, "");
         await __mqsub.consume(qok.queue, this.onmessage.bind(this), { noAck: true });
