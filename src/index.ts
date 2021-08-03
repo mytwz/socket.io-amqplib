@@ -4,7 +4,7 @@
  * @LastEditors: Summer
  * @Description: 
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-08-02 18:22:10 +0800
+ * @LastEditTime: 2021-08-03 10:50:50 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 import uid2 = require("uid2");
@@ -86,8 +86,6 @@ class AmqplibAdapter extends Adapter {
     private readonly requests: Map<string, Function> = new Map();
     private readonly msgbuffers: Buffer[] = [];
     private survivalid: any = 0;
-    /**检查通道可用性 */
-    private checkchannelid: any = 0;
     private ispublish: boolean = false;
 
     public customHook: CustomHook = (data: any, cb: Function) => cb(null);
@@ -106,13 +104,24 @@ class AmqplibAdapter extends Adapter {
     }
 
     async init() {
+
+        console.log("开始初始化")
         this.ispublish = true;
         clearInterval(this.survivalid)
-        clearTimeout(this.checkchannelid);
         try {
             if (__redisdata) __redisdata.disconnect()
         } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
 
+        __redisdata = new ioredis(this.opts);
+        if (this.opts?.password) __redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"))
+
+        this.survivalid = setInterval(this.survivalHeartbeat.bind(this), 1000);
+
+        // 如果 MQ  连接失败了就一切都重新来一遍
+        this.intiMQ().catch(this.init.bind(this));
+    }
+
+    private　async intiMQ(){
         try {
             if (__mqsub) __mqsub.close();
         } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
@@ -127,13 +136,9 @@ class AmqplibAdapter extends Adapter {
                 __mqconnect.close();
             }
         } catch (error) { console.log(REDIS_SURVIVAL_KEY, error) }
-
-        __redisdata = __mqsub = __mqpub = __mqconnect = <any>null;
-
-        __redisdata = new ioredis(this.opts);
-        if (this.opts?.password) __redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"))
+        __mqsub = __mqpub = __mqconnect = <any>null;
         __mqconnect = await connect(this.uri);
-        
+        __mqconnect.on("error", this.checkChannel.bind(this))
         __mqsub = await __mqconnect.createChannel();
         await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
         let qok = await __mqsub.assertQueue("", { exclusive: false, autoDelete:true, durable: false }); debug("QOK", qok);
@@ -142,23 +147,14 @@ class AmqplibAdapter extends Adapter {
 
         __mqpub = await __mqconnect.createChannel();
         await __mqpub.assertExchange(this.channel, "fanout", { durable: false });
-
-        this.survivalid = setInterval(this.survivalHeartbeat.bind(this), 1000);
-        this.ispublish = false;
-        this.sendCheckChannel();
-
         console.log(`[${REDIS_SURVIVAL_KEY}]["建立 MQ 消息通道完成", ${JSON.stringify(qok)}]`)
+        this.ispublish = false;
+        this.startPublish();
     }
 
     private checkChannel() {
-        console.log(`[${REDIS_SURVIVAL_KEY}]["MQ 消息通道超时响应，开始重新建立连接"]`);
+        console.log(`[${REDIS_SURVIVAL_KEY}]["MQ 消息通道响应异常，开始重新建立连接"]`);
         this.init();
-    }
-
-    private sendCheckChannel() {
-        this.msgbuffers.unshift(msgpack.encode([RequestMethod.checkChannel, this.uid]));
-        this.checkchannelid = setTimeout(this.checkChannel.bind(this), this.requestsTimeout);
-        this.startPublish();
     }
 
     private survivalHeartbeat() {
@@ -173,6 +169,7 @@ class AmqplibAdapter extends Adapter {
         return keys.length;
     }
 
+    // 这里的异常检查只会在连接断开是才会生效
     private startPublish() {
         if (this.ispublish === false && __mqpub) {
             let msg = null;
@@ -203,10 +200,6 @@ class AmqplibAdapter extends Adapter {
                 const uid = args.shift();
 
                 if (this.uid === uid) {
-                    if(type == RequestMethod.checkChannel){
-                        clearTimeout(this.checkchannelid);
-                        setTimeout(this.sendCheckChannel.bind(this), 1000);
-                    }
                     return debug("ignore same uid")
                 }
 

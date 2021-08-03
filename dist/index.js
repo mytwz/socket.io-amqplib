@@ -7,7 +7,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
  * @LastEditors: Summer
  * @Description:
  * @Date: 2021-04-15 17:29:34 +0800
- * @LastEditTime: 2021-08-02 18:22:10 +0800
+ * @LastEditTime: 2021-08-03 10:50:50 +0800
  * @FilePath: /socket.io-amqplib/src/index.ts
  */
 const uid2 = require("uid2");
@@ -62,8 +62,6 @@ class AmqplibAdapter extends Adapter {
         this.requests = new Map();
         this.msgbuffers = [];
         this.survivalid = 0;
-        /**检查通道可用性 */
-        this.checkchannelid = 0;
         this.ispublish = false;
         this.customHook = (data, cb) => cb(null);
         this.uid = uid2(6);
@@ -74,9 +72,9 @@ class AmqplibAdapter extends Adapter {
     }
     async init() {
         var _a;
+        console.log("开始初始化");
         this.ispublish = true;
         clearInterval(this.survivalid);
-        clearTimeout(this.checkchannelid);
         try {
             if (__redisdata)
                 __redisdata.disconnect();
@@ -84,6 +82,14 @@ class AmqplibAdapter extends Adapter {
         catch (error) {
             console.log(REDIS_SURVIVAL_KEY, error);
         }
+        __redisdata = new ioredis_1.default(this.opts);
+        if ((_a = this.opts) === null || _a === void 0 ? void 0 : _a.password)
+            __redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"));
+        this.survivalid = setInterval(this.survivalHeartbeat.bind(this), 1000);
+        // 如果 MQ  连接失败了就一切都重新来一遍
+        this.intiMQ().catch(this.init.bind(this));
+    }
+    async intiMQ() {
         try {
             if (__mqsub)
                 __mqsub.close();
@@ -108,11 +114,9 @@ class AmqplibAdapter extends Adapter {
         catch (error) {
             console.log(REDIS_SURVIVAL_KEY, error);
         }
-        __redisdata = __mqsub = __mqpub = __mqconnect = null;
-        __redisdata = new ioredis_1.default(this.opts);
-        if ((_a = this.opts) === null || _a === void 0 ? void 0 : _a.password)
-            __redisdata.auth(this.opts.password).then(_ => debug("redis", "Password verification succeeded"));
+        __mqsub = __mqpub = __mqconnect = null;
         __mqconnect = await amqplib_1.connect(this.uri);
+        __mqconnect.on("error", this.checkChannel.bind(this));
         __mqsub = await __mqconnect.createChannel();
         await __mqsub.assertExchange(this.channel, "fanout", { durable: false });
         let qok = await __mqsub.assertQueue("", { exclusive: false, autoDelete: true, durable: false });
@@ -121,19 +125,13 @@ class AmqplibAdapter extends Adapter {
         await __mqsub.consume(qok.queue, this.onmessage.bind(this), { noAck: true });
         __mqpub = await __mqconnect.createChannel();
         await __mqpub.assertExchange(this.channel, "fanout", { durable: false });
-        this.survivalid = setInterval(this.survivalHeartbeat.bind(this), 1000);
-        this.ispublish = false;
-        this.sendCheckChannel();
         console.log(`[${REDIS_SURVIVAL_KEY}]["建立 MQ 消息通道完成", ${JSON.stringify(qok)}]`);
+        this.ispublish = false;
+        this.startPublish();
     }
     checkChannel() {
-        console.log(`[${REDIS_SURVIVAL_KEY}]["MQ 消息通道超时响应，开始重新建立连接"]`);
+        console.log(`[${REDIS_SURVIVAL_KEY}]["MQ 消息通道响应异常，开始重新建立连接"]`);
         this.init();
-    }
-    sendCheckChannel() {
-        this.msgbuffers.unshift(msgpack.encode([RequestMethod.checkChannel, this.uid]));
-        this.checkchannelid = setTimeout(this.checkChannel.bind(this), this.requestsTimeout);
-        this.startPublish();
     }
     survivalHeartbeat() {
         if (__redisdata) {
@@ -145,6 +143,7 @@ class AmqplibAdapter extends Adapter {
         let keys = await __redisdata.keys(`socket.io-survival:*`);
         return keys.length;
     }
+    // 这里的异常检查只会在连接断开是才会生效
     startPublish() {
         if (this.ispublish === false && __mqpub) {
             let msg = null;
@@ -174,10 +173,6 @@ class AmqplibAdapter extends Adapter {
                 const type = args.shift();
                 const uid = args.shift();
                 if (this.uid === uid) {
-                    if (type == RequestMethod.checkChannel) {
-                        clearTimeout(this.checkchannelid);
-                        setTimeout(this.sendCheckChannel.bind(this), 1000);
-                    }
                     return debug("ignore same uid");
                 }
                 switch (type) {
